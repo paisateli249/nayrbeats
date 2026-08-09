@@ -20,6 +20,8 @@ export default async function Home() {
 
   const beats = databaseBeats.map((beat) => ({
     id: beat.id,
+    beatId: beat.id,
+    slug: beat.slug,
     title: beat.title,
     artist: beat.artist,
     price: beat.mp3Price,
@@ -27,7 +29,7 @@ export default async function Home() {
   }));
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#090909] text-white">
+    <main className="min-h-screen bg-[#090909] text-white">
       <Navbar />
 
       <Hero />

@@ -1,23 +1,55 @@
-import { EmailTemplate } from '../../../components/email-template';
-import { Resend } from 'resend';
+import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+import { EmailTemplate } from "@/components/email-template";
 
 export async function POST() {
   try {
+    const apiKey = process.env.RESEND_API_KEY;
+
+    if (!apiKey) {
+      return Response.json(
+        {
+          error: "RESEND_API_KEY is not configured.",
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    const resend = new Resend(apiKey);
+
     const { data, error } = await resend.emails.send({
-      from: 'Acme <onboarding@resend.dev>',
-      to: ['delivered@resend.dev'],
-      subject: 'Hello world',
-      react: EmailTemplate({ firstName: 'John' }),
+      from: "NAYRBEATS <onboarding@resend.dev>",
+      to: ["delivered@resend.dev"],
+      subject: "NAYRBEATS Email Test",
+      react: EmailTemplate({
+        firstName: "John",
+      }),
     });
 
     if (error) {
-      return Response.json({ error }, { status: 500 });
+      return Response.json(
+        {
+          error,
+        },
+        {
+          status: 500,
+        }
+      );
     }
 
     return Response.json(data);
   } catch (error) {
-    return Response.json({ error }, { status: 500 });
+    console.error("Resend email error:", error);
+
+    return Response.json(
+      {
+        error: "Unable to send email.",
+      },
+      {
+        status: 500,
+      }
+    );
   }
 }
