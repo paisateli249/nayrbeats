@@ -4,10 +4,6 @@ import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-const stripe = new Stripe(
-  process.env.STRIPE_SECRET_KEY!
-);
-
 type LicenseName =
   | "MP3 Lease"
   | "WAV Lease"
@@ -19,6 +15,18 @@ interface StripeCartItem {
   slug: string;
   license: LicenseName;
 }
+
+/*
+ * The transaction only needs access to
+ * the order and beat models.
+ *
+ * This avoids importing Prisma transaction
+ * types that Vercel was having trouble with.
+ */
+type TransactionDb = Pick<
+  typeof prisma,
+  "order" | "beat"
+>;
 
 function getLicensePrice(
   license: LicenseName,
@@ -45,8 +53,27 @@ function getLicensePrice(
 }
 
 export async function POST(request: Request) {
+  const stripeSecretKey =
+    process.env.STRIPE_SECRET_KEY;
+
   const webhookSecret =
     process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!stripeSecretKey) {
+    console.error(
+      "STRIPE_SECRET_KEY is missing."
+    );
+
+    return Response.json(
+      {
+        error:
+          "Stripe secret key is not configured.",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
 
   if (!webhookSecret) {
     console.error(
@@ -64,13 +91,24 @@ export async function POST(request: Request) {
     );
   }
 
+  /*
+   * Create Stripe only when this route
+   * actually receives a request.
+   */
+  const stripe = new Stripe(
+    stripeSecretKey
+  );
+
   const signature =
-    request.headers.get("stripe-signature");
+    request.headers.get(
+      "stripe-signature"
+    );
 
   if (!signature) {
     return Response.json(
       {
-        error: "Missing Stripe signature.",
+        error:
+          "Missing Stripe signature.",
       },
       {
         status: 400,
@@ -81,13 +119,15 @@ export async function POST(request: Request) {
   let event: Stripe.Event;
 
   try {
-    const rawBody = await request.text();
+    const rawBody =
+      await request.text();
 
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      signature,
-      webhookSecret
-    );
+    event =
+      stripe.webhooks.constructEvent(
+        rawBody,
+        signature,
+        webhookSecret
+      );
   } catch (error) {
     console.error(
       "Stripe webhook verification failed:",
@@ -96,7 +136,8 @@ export async function POST(request: Request) {
 
     return Response.json(
       {
-        error: "Invalid webhook signature.",
+        error:
+          "Invalid webhook signature.",
       },
       {
         status: 400,
@@ -118,8 +159,12 @@ export async function POST(request: Request) {
           incomingSession.id
         );
 
+      /*
+       * Only save completed/paid orders.
+       */
       if (
-        session.payment_status !== "paid"
+        session.payment_status !==
+        "paid"
       ) {
         return Response.json({
           received: true,
@@ -140,9 +185,10 @@ export async function POST(request: Request) {
       let cartItems: StripeCartItem[];
 
       try {
-        cartItems = JSON.parse(
-          cartMetadata
-        ) as StripeCartItem[];
+        cartItems =
+          JSON.parse(
+            cartMetadata
+          ) as StripeCartItem[];
       } catch {
         throw new Error(
           "Stripe cart metadata is invalid."
@@ -158,10 +204,15 @@ export async function POST(request: Request) {
         );
       }
 
+      /*
+       * Prevent the same Stripe checkout
+       * from creating two orders.
+       */
       const existingOrder =
         await prisma.order.findUnique({
           where: {
-            stripeSessionId: session.id,
+            stripeSessionId:
+              session.id,
           },
         });
 
@@ -173,69 +224,87 @@ export async function POST(request: Request) {
         });
       }
 
-      const validLicenses: LicenseName[] =
-        [
-          "MP3 Lease",
-          "WAV Lease",
-          "Unlimited",
-          "Exclusive",
-        ];
+      const validLicenses:
+        LicenseName[] = [
+        "MP3 Lease",
+        "WAV Lease",
+        "Unlimited",
+        "Exclusive",
+      ];
 
+      /*
+       * Verify every beat against our
+       * own database before saving.
+       */
       const verifiedItems =
         await Promise.all(
-          cartItems.map(async (item) => {
-            const beat =
-              await prisma.beat.findUnique({
-                where: {
-                  id: item.beatId,
-                },
-              });
+          cartItems.map(
+            async (
+              item: StripeCartItem
+            ) => {
+              const beat =
+                await prisma.beat.findUnique({
+                  where: {
+                    id: item.beatId,
+                  },
+                });
 
-            if (!beat) {
-              throw new Error(
-                `Beat ${item.beatId} was not found.`
-              );
+              if (!beat) {
+                throw new Error(
+                  `Beat ${item.beatId} was not found.`
+                );
+              }
+
+              if (
+                !validLicenses.includes(
+                  item.license
+                )
+              ) {
+                throw new Error(
+                  `Invalid license for ${beat.title}.`
+                );
+              }
+
+              return {
+                beat,
+                license:
+                  item.license,
+
+                price:
+                  getLicensePrice(
+                    item.license,
+                    beat
+                  ),
+              };
             }
-
-            if (
-              !validLicenses.includes(
-                item.license
-              )
-            ) {
-              throw new Error(
-                `Invalid license for ${beat.title}.`
-              );
-            }
-
-            return {
-              beat,
-              license: item.license,
-              price: getLicensePrice(
-                item.license,
-                beat
-              ),
-            };
-          })
+          )
         );
 
       const paymentIntentId =
         typeof session.payment_intent ===
         "string"
           ? session.payment_intent
-          : session.payment_intent?.id ??
-            null;
+          : session.payment_intent
+              ?.id ?? null;
 
       const customerEmail =
-        session.customer_details?.email ??
+        session.customer_details
+          ?.email ??
         session.customer_email ??
         "unknown@example.com";
 
       const customerName =
-        session.customer_details?.name ??
-        null;
+        session.customer_details
+          ?.name ?? null;
 
+      /*
+       * Save the order and handle
+       * exclusive beats atomically.
+       */
       await prisma.$transaction(
-        async (transaction) => {
+        async (
+          transaction: TransactionDb
+        ) => {
           await transaction.order.create({
             data: {
               stripeSessionId:
@@ -249,41 +318,49 @@ export async function POST(request: Request) {
               customerName,
 
               amountTotal:
-                session.amount_total ?? 0,
+                session.amount_total ??
+                0,
 
               currency:
-                session.currency ?? "usd",
+                session.currency ??
+                "usd",
 
               paymentStatus:
                 session.payment_status,
 
               items: {
-                create: verifiedItems.map(
-                  ({
-                    beat,
-                    license,
-                    price,
-                  }) => ({
-                    beatId: beat.id,
+                create:
+                  verifiedItems.map(
+                    ({
+                      beat,
+                      license,
+                      price,
+                    }) => ({
+                      beatId:
+                        beat.id,
 
-                    beatTitle:
-                      beat.title,
+                      beatTitle:
+                        beat.title,
 
-                    beatSlug:
-                      beat.slug,
+                      beatSlug:
+                        beat.slug,
 
-                    artist:
-                      beat.artist,
+                      artist:
+                        beat.artist,
 
-                    license,
+                      license,
 
-                    price,
-                  })
-                ),
+                      price,
+                    })
+                  ),
               },
             },
           });
 
+          /*
+           * Exclusive purchases should
+           * remove the beat from sale.
+           */
           const exclusiveItems =
             verifiedItems.filter(
               (item) =>
@@ -292,7 +369,8 @@ export async function POST(request: Request) {
             );
 
           for (
-            const item of exclusiveItems
+            const item
+            of exclusiveItems
           ) {
             await transaction.beat.update({
               where: {
