@@ -8,29 +8,42 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
-  const databaseBeats = await prisma.beat.findMany({
-    where: {
-      published: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+type DatabaseBeat = {
+  id: number;
+  title: string;
+  artist: string;
+  slug: string;
+  artworkUrl: string | null;
+  mp3Price: number;
+  previewUrl: string;
+};
 
-  const beats = databaseBeats.map((beat) => ({
-    id: beat.id,
-    beatId: beat.id,
-    title: beat.title,
-    artist: beat.artist,
-    slug: beat.slug,
-    artworkUrl: beat.artworkUrl,
-    price: beat.mp3Price,
-    audio: beat.previewUrl,
-  }));
+export default async function Home() {
+  const databaseBeats =
+    (await prisma.beat.findMany({
+      where: {
+        published: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    })) as DatabaseBeat[];
+
+  const beats = databaseBeats.map(
+    (beat: DatabaseBeat) => ({
+      id: beat.id,
+      beatId: beat.id,
+      title: beat.title,
+      artist: beat.artist,
+      slug: beat.slug,
+      artworkUrl: beat.artworkUrl,
+      price: beat.mp3Price,
+      audio: beat.previewUrl,
+    })
+  );
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#090909] text-white">
+    <main className="min-h-screen bg-[#090909] text-white">
       <Navbar />
 
       <Hero />
