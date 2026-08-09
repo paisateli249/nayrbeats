@@ -1,16 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, User, X } from "lucide-react";
+import { X } from "lucide-react";
 
-type CustomerInfoProps = {
+interface CustomerInfoProps {
   open: boolean;
   onClose: () => void;
-  onContinue?: (customer: {
+  onContinue: (customer: {
     name: string;
     email: string;
   }) => void;
-};
+}
 
 export default function CustomerInfo({
   open,
@@ -19,6 +19,7 @@ export default function CustomerInfo({
 }: CustomerInfoProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
 
   if (!open) return null;
 
@@ -28,48 +29,56 @@ export default function CustomerInfo({
     event.preventDefault();
 
     if (!name.trim() || !email.trim()) {
+      setError("Please enter your name and email.");
       return;
     }
 
-    onContinue?.({
+    if (!email.includes("@")) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    setError("");
+
+    onContinue({
       name: name.trim(),
       email: email.trim(),
     });
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#111111] p-6 shadow-2xl sm:p-8"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.25em] text-blue-500">
-              Customer Details
-            </p>
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 p-5 backdrop-blur-md">
+      <button
+        type="button"
+        aria-label="Close customer information"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default"
+      />
 
-            <h2 className="text-3xl font-black text-white">
-              Enter Your Information
-            </h2>
-          </div>
+      <div className="relative z-10 w-full max-w-lg rounded-3xl border border-white/10 bg-[#111111] p-8 text-white shadow-2xl">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-5 top-5 rounded-full border border-white/10 p-2 transition hover:border-blue-500 hover:text-blue-500"
+        >
+          <X size={20} />
+        </button>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close customer information form"
-            className="rounded-full border border-white/10 p-2 text-gray-400 transition hover:border-blue-500 hover:text-white"
-          >
-            <X size={20} />
-          </button>
-        </div>
+        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-blue-500">
+          Checkout
+        </p>
+
+        <h2 className="mt-3 text-3xl font-black">
+          Customer Information
+        </h2>
+
+        <p className="mt-3 text-gray-400">
+          Your beat files and license will be sent to this email.
+        </p>
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-5"
+          className="mt-8 space-y-5"
         >
           <div>
             <label
@@ -79,24 +88,16 @@ export default function CustomerInfo({
               Full Name
             </label>
 
-            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4">
-              <User
-                size={20}
-                className="text-gray-500"
-              />
-
-              <input
-                id="customer-name"
-                type="text"
-                value={name}
-                onChange={(event) =>
-                  setName(event.target.value)
-                }
-                placeholder="Your name"
-                className="w-full bg-transparent py-4 text-white outline-none placeholder:text-gray-600"
-                required
-              />
-            </div>
+            <input
+              id="customer-name"
+              type="text"
+              value={name}
+              onChange={(event) =>
+                setName(event.target.value)
+              }
+              placeholder="Your full name"
+              className="w-full rounded-xl border border-white/10 bg-[#1b1b1b] p-4 text-white outline-none transition placeholder:text-gray-600 focus:border-blue-500"
+            />
           </div>
 
           <div>
@@ -107,31 +108,37 @@ export default function CustomerInfo({
               Email Address
             </label>
 
-            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4">
-              <Mail
-                size={20}
-                className="text-gray-500"
-              />
-
-              <input
-                id="customer-email"
-                type="email"
-                value={email}
-                onChange={(event) =>
-                  setEmail(event.target.value)
-                }
-                placeholder="you@example.com"
-                className="w-full bg-transparent py-4 text-white outline-none placeholder:text-gray-600"
-                required
-              />
-            </div>
+            <input
+              id="customer-email"
+              type="email"
+              value={email}
+              onChange={(event) =>
+                setEmail(event.target.value)
+              }
+              placeholder="you@email.com"
+              className="w-full rounded-xl border border-white/10 bg-[#1b1b1b] p-4 text-white outline-none transition placeholder:text-gray-600 focus:border-blue-500"
+            />
           </div>
+
+          {error && (
+            <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+              {error}
+            </p>
+          )}
 
           <button
             type="submit"
-            className="w-full rounded-full bg-blue-600 px-6 py-4 font-bold text-white transition hover:bg-blue-500"
+            className="w-full rounded-xl bg-blue-600 py-4 text-lg font-bold transition hover:bg-blue-500"
           >
-            Continue
+            Continue to Payment
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl border border-white/10 py-3 font-semibold transition hover:border-blue-500"
+          >
+            Cancel
           </button>
         </form>
       </div>

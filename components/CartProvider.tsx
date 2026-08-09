@@ -2,26 +2,41 @@
 
 import {
   createContext,
+  ReactNode,
   useContext,
+  useMemo,
   useState,
 } from "react";
 
-export type CartItem = {
+export interface CartItem {
+  id: string;
+  beatId?: number;
   title: string;
+  artist: string;
+  slug: string;
   license: string;
   price: number;
-};
+  artworkUrl?: string | null;
+}
 
-type CartContextType = {
+export interface AddToCartItem {
+  beatId?: number;
+  title: string;
+  artist: string;
+  slug: string;
+  license: string;
+  price: number;
+  artworkUrl?: string | null;
+}
+
+interface CartContextType {
   cart: CartItem[];
-  isOpen: boolean;
-  addToCart: (item: CartItem) => void;
-  removeFromCart: (index: number) => void;
-  openCart: () => void;
-  closeCart: () => void;
-  toggleCart: () => void;
+  addToCart: (item: AddToCartItem) => void;
+  removeFromCart: (id: string) => void;
   clearCart: () => void;
-};
+  cartTotal: number;
+  cartCount: number;
+}
 
 const CartContext = createContext<CartContextType | null>(
   null
@@ -30,51 +45,64 @@ const CartContext = createContext<CartContextType | null>(
 export function CartProvider({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
 
-  const addToCart = (item: CartItem) => {
-    setCart((prev) => [...prev, item]);
-    setIsOpen(true);
-  };
+  function addToCart(item: AddToCartItem) {
+    setCart((previousCart) => {
+      const duplicate = previousCart.some(
+        (cartItem) =>
+          cartItem.slug === item.slug &&
+          cartItem.license === item.license
+      );
 
-  const removeFromCart = (index: number) => {
-    setCart((prev) =>
-      prev.filter((_, itemIndex) => itemIndex !== index)
+      if (duplicate) {
+        return previousCart;
+      }
+
+      const newItem: CartItem = {
+        ...item,
+        id: crypto.randomUUID(),
+      };
+
+      return [...previousCart, newItem];
+    });
+  }
+
+  function removeFromCart(id: string) {
+    setCart((previousCart) =>
+      previousCart.filter((item) => item.id !== id)
     );
-  };
+  }
 
-  const openCart = () => {
-    setIsOpen(true);
-  };
-
-  const closeCart = () => {
-    setIsOpen(false);
-  };
-
-  const toggleCart = () => {
-    setIsOpen((prev) => !prev);
-  };
-
-  const clearCart = () => {
+  function clearCart() {
     setCart([]);
-  };
+  }
+
+  const cartTotal = useMemo(() => {
+    return cart.reduce(
+      (total, item) => total + item.price,
+      0
+    );
+  }, [cart]);
+
+  const cartCount = cart.length;
+
+  const value = useMemo(
+    () => ({
+      cart,
+      addToCart,
+      removeFromCart,
+      clearCart,
+      cartTotal,
+      cartCount,
+    }),
+    [cart, cartTotal, cartCount]
+  );
 
   return (
-    <CartContext.Provider
-      value={{
-        cart,
-        isOpen,
-        addToCart,
-        removeFromCart,
-        openCart,
-        closeCart,
-        toggleCart,
-        clearCart,
-      }}
-    >
+    <CartContext.Provider value={value}>
       {children}
     </CartContext.Provider>
   );

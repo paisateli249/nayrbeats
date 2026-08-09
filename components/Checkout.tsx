@@ -1,115 +1,210 @@
-"use client";
+import { NextResponse } from "next/server";
+import Stripe from "stripe";
 
-import { CreditCard, X } from "lucide-react";
+import prisma from "@/lib/prisma";
 
-import { useCart } from "./CartProvider";
+export const runtime = "nodejs";
 
-type CheckoutProps = {
-  open: boolean;
-  onClose: () => void;
-};
+const stripe = new Stripe(
+  process.env.STRIPE_SECRET_KEY!
+);
 
-export default function Checkout({
-  open,
-  onClose,
-}: CheckoutProps) {
-  const { cart } = useCart();
+interface CheckoutItem {
+  beatId?: number;
+  title: string;
+  artist: string;
+  slug: string;
+  license: string;
+  artworkUrl?: string | null;
+}
 
-  if (!open) return null;
+type LicenseName =
+  | "MP3 Lease"
+  | "WAV Lease"
+  | "Unlimited"
+  | "Exclusive";
 
-  const total = cart.reduce(
-    (sum, item) => sum + item.price,
-    0
-  );
+function getLicensePrice(
+  license: LicenseName,
+  beat: {
+    mp3Price: number;
+    wavPrice: number;
+    unlimitedPrice: number;
+    exclusivePrice: number;
+  }
+) {
+  switch (license) {
+    case "MP3 Lease":
+      return beat.mp3Price;
 
-  return (
-    <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#111111] p-6 shadow-2xl sm:p-8"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.25em] text-blue-500">
-              Checkout
-            </p>
+    case "WAV Lease":
+      return beat.wavPrice;
 
-            <h2 className="text-3xl font-black text-white">
-              Complete Your Order
-            </h2>
-          </div>
+    case "Unlimited":
+      return beat.unlimitedPrice;
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close checkout"
-            className="rounded-full border border-white/10 p-2 text-gray-400 transition hover:border-blue-500 hover:text-white"
-          >
-            <X size={20} />
-          </button>
-        </div>
+    case "Exclusive":
+      return beat.exclusivePrice;
+  }
+}
 
-        <div className="mb-6 space-y-3">
-          {cart.map((item, index) => (
-            <div
-              key={`${item.title}-${item.license}-${index}`}
-              className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] p-4"
-            >
-              <div>
-                <h3 className="font-bold text-white">
-                  {item.title}
-                </h3>
+export async function POST(request: Request) {
+  try {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return NextResponse.json(
+        {
+          error:
+            "Stripe secret key is missing from .env.local.",
+        },
+        {
+          status: 500,
+        }
+      );
+    }
 
-                <p className="text-sm text-gray-400">
-                  {item.license}
-                </p>
-              </div>
+    const body = await request.json();
+    const items = body.items as CheckoutItem[];
 
-              <span className="font-black text-blue-500">
-                ${item.price.toFixed(2)}
-              </span>
-            </div>
-          ))}
-        </div>
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json(
+        {
+          error: "Your cart is empty.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
-        <div className="mb-6 flex items-center justify-between border-t border-white/10 pt-5">
-          <span className="text-gray-400">
-            Total
-          </span>
+    const verifiedItems = await Promise.all(
+      items.map(async (item) => {
+        const beat = await prisma.beat.findUnique({
+          where: {
+            slug: item.slug,
+          },
+        });
 
-          <span className="text-3xl font-black text-white">
-            ${total.toFixed(2)}
-          </span>
-        </div>
+        if (!beat || !beat.published) {
+          throw new Error(
+            `Beat "${item.slug}" was not found or is unavailable.`
+          );
+        }
 
-        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5">
-          <div className="flex items-center gap-3">
-            <CreditCard className="text-blue-500" />
+        const validLicenses: LicenseName[] = [
+          "MP3 Lease",
+          "WAV Lease",
+          "Unlimited",
+          "Exclusive",
+        ];
 
-            <div>
-              <h3 className="font-bold text-white">
-                Payment Coming Next
-              </h3>
+        if (
+          !validLicenses.includes(
+            item.license as LicenseName
+          )
+        ) {
+          throw new Error(
+            `Invalid license for "${beat.title}".`
+          );
+        }
 
-              <p className="mt-1 text-sm leading-6 text-gray-400">
-                Stripe checkout will connect here after
-                the full site is restored.
-              </p>
-            </div>
-          </div>
-        </div>
+        const license =
+          item.license as LicenseName;
 
-        <button
-          type="button"
-          disabled
-          className="mt-6 w-full cursor-not-allowed rounded-full bg-blue-600/50 px-6 py-4 font-bold text-white/70"
-        >
-          Pay ${total.toFixed(2)}
-        </button>
-      </div>
-    </div>
-  );
+        const price = getLicensePrice(
+          license,
+          beat
+        );
+
+        return {
+          beat,
+          license,
+          price,
+        };
+      })
+    );
+
+    const origin =
+      request.headers.get("origin") ??
+      "http://localhost:3000";
+
+    const session =
+      await stripe.checkout.sessions.create({
+        mode: "payment",
+
+        line_items: verifiedItems.map(
+          ({ beat, license, price }) => ({
+            price_data: {
+              currency: "usd",
+
+              product_data: {
+                name: beat.title,
+                description: `${license} • ${beat.artist}`,
+
+                metadata: {
+                  beatId: String(beat.id),
+                  slug: beat.slug,
+                  license,
+                },
+              },
+
+              unit_amount: Math.round(
+                price * 100
+              ),
+            },
+
+            quantity: 1,
+          })
+        ),
+
+        metadata: {
+          cart: JSON.stringify(
+            verifiedItems.map(
+              ({ beat, license }) => ({
+                beatId: beat.id,
+                slug: beat.slug,
+                license,
+              })
+            )
+          ),
+        },
+
+        customer_creation: "always",
+
+        billing_address_collection: "required",
+
+        allow_promotion_codes: true,
+
+        success_url:
+          `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url: `${origin}/`,
+      });
+
+    if (!session.url) {
+      throw new Error(
+        "Stripe did not return a checkout URL."
+      );
+    }
+
+    return NextResponse.json({
+      url: session.url,
+    });
+  } catch (error) {
+    console.error(
+      "Stripe checkout error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to create checkout session.",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
 }

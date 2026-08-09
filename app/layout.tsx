@@ -1,29 +1,32 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-import { AudioProvider } from "../components/AudioProvider";
-import { CartProvider } from "../components/CartProvider";
-import MusicPlayer from "../components/MusicPlayer";
-import Cart from "../components/Cart";
+import { AudioProvider } from "@/components/AudioProvider";
+import { CartProvider } from "@/components/CartProvider";
+import MusicPlayer from "@/components/MusicPlayer";
+import SiteShell from "@/components/SiteShell";
 
 export const metadata: Metadata = {
-  title: "NAYRB",
-  description: "West Coast Sound",
+  title: "NAYRBEATS",
+  description: "Premium West Coast beats by NAYRBEATS.",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
       <body className="bg-[#090909] text-white">
         <AudioProvider>
           <CartProvider>
-            {children}
+            <SiteShell>
+              <main className="min-h-screen pb-28 md:pb-24">
+                {children}
+              </main>
+            </SiteShell>
 
-            <Cart />
             <MusicPlayer />
           </CartProvider>
         </AudioProvider>

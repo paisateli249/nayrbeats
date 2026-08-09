@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Beat {
+  id             Int         @id @default(autoincrement())
+  title          String
+  artist         String      @default("NAYRBEATS")
+  slug           String      @unique
+  bpm            Int
+  key            String
+  genre          String
+  description    String?
+  previewUrl     String
+  fullMp3Path    String
+  fullWavPath    String?
+  artworkUrl     String?
+  mp3Price       Int         @default(30)
+  wavPrice       Int         @default(50)
+  unlimitedPrice Int         @default(100)
+  exclusivePrice Int         @default(200)
+  published      Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  orderItems     OrderItem[]
+}
+
+model Order {
+  id                    Int         @id @default(autoincrement())
+  stripeSessionId       String      @unique
+  stripePaymentIntentId String?     @unique
+  customerEmail         String
+  customerName          String?
+  amountTotal           Int
+  currency              String      @default("usd")
+  paymentStatus         String      @default("paid")
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  items                 OrderItem[]
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  beatId    Int?
+  beatTitle String
+  beatSlug  String
+  artist    String
+  license   String
+  price     Int
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  beat  Beat? @relation(fields: [beatId], references: [id], onDelete: SetNull)
+}
