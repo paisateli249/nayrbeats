@@ -5,19 +5,38 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+type DashboardBeat = {
+  id: number;
+  title: string;
+  artist: string;
+  slug: string;
+  artworkUrl: string | null;
+  published: boolean;
+  bpm: number | null;
+  key: string | null;
+  genre: string | null;
+  description: string | null;
+  mp3Price: number;
+  wavPrice: number;
+  unlimitedPrice: number;
+  exclusivePrice: number;
+  previewUrl: string;
+};
+
 export default async function BeatsPage() {
-  const beats = await prisma.beat.findMany({
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const beats =
+    (await prisma.beat.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+    })) as DashboardBeat[];
 
   return (
-    <main className="min-h-screen bg-[#090909] px-6 py-10 text-white lg:px-8">
+    <main className="min-h-screen bg-[#090909] px-6 py-12 text-white">
       <div className="mx-auto max-w-7xl">
-        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+        <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.3em] text-blue-500">
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-500">
               Catalog Manager
             </p>
 
@@ -67,7 +86,7 @@ export default async function BeatsPage() {
           </div>
         ) : (
           <div className="mt-8 space-y-5">
-            {beats.map((beat) => (
+            {beats.map((beat: DashboardBeat) => (
               <article
                 key={beat.id}
                 className="rounded-3xl border border-white/10 bg-[#111111] p-5 transition hover:border-blue-500/30"
@@ -101,8 +120,8 @@ export default async function BeatsPage() {
                     </div>
 
                     <p className="mt-2 text-sm text-gray-500">
-                      {beat.artist} • {beat.bpm} BPM • {beat.key} •{" "}
-                      {beat.genre}
+                      {beat.artist} • {beat.bpm ?? "—"} BPM •{" "}
+                      {beat.key ?? "—"} • {beat.genre ?? "—"}
                     </p>
 
                     {beat.description && (
