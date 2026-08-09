@@ -7,6 +7,16 @@ export const runtime = "nodejs";
 
 type DownloadFormat = "mp3" | "wav";
 
+type OrderItemWithBeat = {
+  beatSlug: string;
+  license: string;
+  beat: {
+    title: string;
+    fullMp3Path: string | null;
+    fullWavPath: string | null;
+  } | null;
+};
+
 const wavLicenses = new Set([
   "WAV Lease",
   "Unlimited",
@@ -69,7 +79,10 @@ function resolveFilePath(filePath: string) {
 
   // Otherwise treat the value as relative to
   // the project directory.
-  return path.join(process.cwd(), cleanPath);
+  return path.join(
+    process.cwd(),
+    cleanPath
+  );
 }
 
 export async function GET(request: Request) {
@@ -113,7 +126,7 @@ export async function GET(request: Request) {
     /*
      * Find the completed order.
      *
-     * We include the OrderItems and their related
+     * Include OrderItems and their related
      * Beat so we can verify that this customer
      * actually purchased the requested beat.
      */
@@ -156,10 +169,18 @@ export async function GET(request: Request) {
     }
 
     /*
+     * Give the included order items an
+     * explicit TypeScript type.
+     */
+    const orderItems =
+      order.items as OrderItemWithBeat[];
+
+    /*
      * Find the purchased beat inside this order.
      */
-    const purchasedItem = order.items.find(
-      (item) => item.beatSlug === slug
+    const purchasedItem = orderItems.find(
+      (item: OrderItemWithBeat) =>
+        item.beatSlug === slug
     );
 
     if (!purchasedItem) {
@@ -188,6 +209,12 @@ export async function GET(request: Request) {
         where: {
           slug,
         },
+
+        select: {
+          title: true,
+          fullMp3Path: true,
+          fullWavPath: true,
+        },
       });
     }
 
@@ -212,7 +239,7 @@ export async function GET(request: Request) {
      * Unlimited = MP3 + WAV
      * Exclusive = MP3 + WAV
      */
-    let format: DownloadFormat =
+    const format: DownloadFormat =
       requestedFormat;
 
     if (
@@ -257,14 +284,13 @@ export async function GET(request: Request) {
 
     /*
      * Convert the database path into the actual
-     * filesystem location on your Mac/server.
+     * filesystem location.
      */
     const absoluteFilePath =
       resolveFilePath(storedFilePath);
 
     /*
-     * Make sure the file actually exists before
-     * attempting to send it.
+     * Make sure the file actually exists.
      */
     try {
       await fs.access(absoluteFilePath);
@@ -288,24 +314,20 @@ export async function GET(request: Request) {
     /*
      * Read the audio file.
      */
-    const fileBuffer = await fs.readFile(
-      absoluteFilePath
-    );
+    const fileBuffer =
+      await fs.readFile(absoluteFilePath);
 
     /*
-     * Convert Node's Buffer to Uint8Array.
-     *
-     * This avoids the TypeScript Response-body
-     * error you were seeing.
+     * Convert Node Buffer to Uint8Array.
      */
-    const fileBytes = new Uint8Array(
-      fileBuffer
-    );
+    const fileBytes =
+      new Uint8Array(fileBuffer);
 
-    const fileName = createDownloadName(
-      beat.title,
-      format
-    );
+    const fileName =
+      createDownloadName(
+        beat.title,
+        format
+      );
 
     /*
      * Send the purchased file to the browser.
@@ -317,9 +339,8 @@ export async function GET(request: Request) {
         "Content-Type":
           getContentType(format),
 
-        "Content-Length": String(
-          fileBytes.byteLength
-        ),
+        "Content-Length":
+          String(fileBytes.byteLength),
 
         "Content-Disposition":
           `attachment; filename="${fileName}"`,
