@@ -2,7 +2,30 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-function formatMoney(amountInCents: number, currency: string) {
+type OrderItem = {
+  id: number;
+  beatTitle: string;
+  artist: string;
+  license: string;
+  price: number;
+};
+
+type DashboardOrder = {
+  id: number;
+  customerEmail: string;
+  customerName: string | null;
+  createdAt: Date;
+  paymentStatus: string;
+  amountTotal: number;
+  currency: string;
+  stripeSessionId: string;
+  items: OrderItem[];
+};
+
+function formatMoney(
+  amountInCents: number,
+  currency: string
+) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: currency.toUpperCase(),
@@ -17,25 +40,37 @@ function formatDate(date: Date) {
 }
 
 export default async function OrdersPage() {
-  const orders = await prisma.order.findMany({
-    include: {
-      items: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const orders =
+    (await prisma.order.findMany({
+      include: {
+        items: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    })) as DashboardOrder[];
 
   const totalRevenue = orders.reduce(
-    (sum, order) => sum + order.amountTotal,
+    (
+      sum: number,
+      order: DashboardOrder
+    ) => sum + order.amountTotal,
+    0
+  );
+
+  const totalItemsSold = orders.reduce(
+    (
+      sum: number,
+      order: DashboardOrder
+    ) => sum + order.items.length,
     0
   );
 
   return (
-    <main className="min-h-screen bg-[#090909] px-6 py-10 text-white lg:px-8">
+    <main className="min-h-screen bg-[#090909] px-6 py-12 text-white">
       <div className="mx-auto max-w-7xl">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.3em] text-blue-500">
+          <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-500">
             Sales Manager
           </p>
 
@@ -63,12 +98,7 @@ export default async function OrdersPage() {
 
           <StatCard
             label="Items Sold"
-            value={String(
-              orders.reduce(
-                (sum, order) => sum + order.items.length,
-                0
-              )
-            )}
+            value={String(totalItemsSold)}
             valueClassName="text-yellow-500"
           />
         </div>
@@ -85,83 +115,91 @@ export default async function OrdersPage() {
           </div>
         ) : (
           <div className="mt-8 space-y-6">
-            {orders.map((order) => (
-              <article
-                key={order.id}
-                className="rounded-3xl border border-white/10 bg-[#111111] p-6"
-              >
-                <div className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-500">
-                      Order #{order.id}
-                    </p>
-
-                    <h2 className="mt-2 text-xl font-black">
-                      {order.customerEmail}
-                    </h2>
-
-                    {order.customerName && (
-                      <p className="mt-1 text-sm text-gray-500">
-                        {order.customerName}
+            {orders.map(
+              (order: DashboardOrder) => (
+                <article
+                  key={order.id}
+                  className="rounded-3xl border border-white/10 bg-[#111111] p-6"
+                >
+                  <div className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-500">
+                        Order #{order.id}
                       </p>
-                    )}
 
-                    <p className="mt-3 text-sm text-gray-500">
-                      {formatDate(order.createdAt)}
-                    </p>
-                  </div>
+                      <h2 className="mt-2 text-xl font-black">
+                        {order.customerEmail}
+                      </h2>
 
-                  <div className="text-left md:text-right">
-                    <span className="inline-flex rounded-full bg-green-500/15 px-3 py-1 text-xs font-black uppercase tracking-wider text-green-400">
-                      {order.paymentStatus}
-                    </span>
-
-                    <p className="mt-3 text-3xl font-black">
-                      {formatMoney(
-                        order.amountTotal,
-                        order.currency
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-6 space-y-4">
-                  {order.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div>
-                        <h3 className="font-black">
-                          {item.beatTitle}
-                        </h3>
-
+                      {order.customerName && (
                         <p className="mt-1 text-sm text-gray-500">
-                          {item.artist}
+                          {order.customerName}
                         </p>
+                      )}
 
-                        <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-blue-400">
-                          {item.license}
-                        </p>
-                      </div>
+                      <p className="mt-3 text-sm text-gray-500">
+                        {formatDate(
+                          order.createdAt
+                        )}
+                      </p>
+                    </div>
 
-                      <p className="text-xl font-black">
+                    <div className="text-left md:text-right">
+                      <span className="inline-flex rounded-full bg-green-500/15 px-3 py-1 text-xs font-black uppercase tracking-wider text-green-400">
+                        {order.paymentStatus}
+                      </span>
+
+                      <p className="mt-3 text-3xl font-black">
                         {formatMoney(
-                          item.price * 100,
+                          order.amountTotal,
                           order.currency
                         )}
                       </p>
                     </div>
-                  ))}
-                </div>
+                  </div>
 
-                <div className="mt-6 border-t border-white/10 pt-5">
-                  <p className="break-all text-xs text-gray-600">
-                    Stripe Session: {order.stripeSessionId}
-                  </p>
-                </div>
-              </article>
-            ))}
+                  <div className="mt-6 space-y-4">
+                    {order.items.map(
+                      (item: OrderItem) => (
+                        <div
+                          key={item.id}
+                          className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div>
+                            <h3 className="font-black">
+                              {item.beatTitle}
+                            </h3>
+
+                            <p className="mt-1 text-sm text-gray-500">
+                              {item.artist}
+                            </p>
+
+                            <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-blue-400">
+                              {item.license}
+                            </p>
+                          </div>
+
+                          <p className="text-xl font-black">
+                            {formatMoney(
+                              item.price *
+                                100,
+                              order.currency
+                            )}
+                          </p>
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  <div className="mt-6 border-t border-white/10 pt-5">
+                    <p className="break-all text-xs text-gray-600">
+                      Stripe Session:{" "}
+                      {order.stripeSessionId}
+                    </p>
+                  </div>
+                </article>
+              )
+            )}
           </div>
         )}
       </div>
@@ -186,7 +224,9 @@ function StatCard({
         {label}
       </p>
 
-      <p className={`mt-3 text-4xl font-black ${valueClassName}`}>
+      <p
+        className={`mt-3 text-4xl font-black ${valueClassName}`}
+      >
         {value}
       </p>
     </div>
