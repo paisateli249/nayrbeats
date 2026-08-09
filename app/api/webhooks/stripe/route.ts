@@ -1,9 +1,12 @@
 import Stripe from "stripe";
-import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
+
+const stripe = new Stripe(
+  process.env.STRIPE_SECRET_KEY!
+);
 
 type LicenseName =
   | "MP3 Lease"
@@ -42,27 +45,8 @@ function getLicensePrice(
 }
 
 export async function POST(request: Request) {
-  const stripeSecretKey =
-    process.env.STRIPE_SECRET_KEY;
-
   const webhookSecret =
     process.env.STRIPE_WEBHOOK_SECRET;
-
-  if (!stripeSecretKey) {
-    console.error(
-      "STRIPE_SECRET_KEY is missing."
-    );
-
-    return Response.json(
-      {
-        error:
-          "Stripe secret key is not configured.",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
 
   if (!webhookSecret) {
     console.error(
@@ -79,8 +63,6 @@ export async function POST(request: Request) {
       }
     );
   }
-
-  const stripe = new Stripe(stripeSecretKey);
 
   const signature =
     request.headers.get("stripe-signature");
@@ -201,41 +183,39 @@ export async function POST(request: Request) {
 
       const verifiedItems =
         await Promise.all(
-          cartItems.map(
-            async (item: StripeCartItem) => {
-              const beat =
-                await prisma.beat.findUnique({
-                  where: {
-                    id: item.beatId,
-                  },
-                });
+          cartItems.map(async (item) => {
+            const beat =
+              await prisma.beat.findUnique({
+                where: {
+                  id: item.beatId,
+                },
+              });
 
-              if (!beat) {
-                throw new Error(
-                  `Beat ${item.beatId} was not found.`
-                );
-              }
-
-              if (
-                !validLicenses.includes(
-                  item.license
-                )
-              ) {
-                throw new Error(
-                  `Invalid license for ${beat.title}.`
-                );
-              }
-
-              return {
-                beat,
-                license: item.license,
-                price: getLicensePrice(
-                  item.license,
-                  beat
-                ),
-              };
+            if (!beat) {
+              throw new Error(
+                `Beat ${item.beatId} was not found.`
+              );
             }
-          )
+
+            if (
+              !validLicenses.includes(
+                item.license
+              )
+            ) {
+              throw new Error(
+                `Invalid license for ${beat.title}.`
+              );
+            }
+
+            return {
+              beat,
+              license: item.license,
+              price: getLicensePrice(
+                item.license,
+                beat
+              ),
+            };
+          })
         );
 
       const paymentIntentId =
@@ -255,17 +235,17 @@ export async function POST(request: Request) {
         null;
 
       await prisma.$transaction(
-        async (
-          transaction: Prisma.TransactionClient
-        ) => {
+        async (transaction) => {
           await transaction.order.create({
             data: {
-              stripeSessionId: session.id,
+              stripeSessionId:
+                session.id,
 
               stripePaymentIntentId:
                 paymentIntentId,
 
               customerEmail,
+
               customerName,
 
               amountTotal:
@@ -285,10 +265,18 @@ export async function POST(request: Request) {
                     price,
                   }) => ({
                     beatId: beat.id,
-                    beatTitle: beat.title,
-                    beatSlug: beat.slug,
-                    artist: beat.artist,
+
+                    beatTitle:
+                      beat.title,
+
+                    beatSlug:
+                      beat.slug,
+
+                    artist:
+                      beat.artist,
+
                     license,
+
                     price,
                   })
                 ),
