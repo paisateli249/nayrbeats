@@ -1,12 +1,9 @@
 import Stripe from "stripe";
+import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
-
-const stripe = new Stripe(
-  process.env.STRIPE_SECRET_KEY!
-);
 
 type LicenseName =
   | "MP3 Lease"
@@ -45,8 +42,27 @@ function getLicensePrice(
 }
 
 export async function POST(request: Request) {
+  const stripeSecretKey =
+    process.env.STRIPE_SECRET_KEY;
+
   const webhookSecret =
     process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!stripeSecretKey) {
+    console.error(
+      "STRIPE_SECRET_KEY is missing."
+    );
+
+    return Response.json(
+      {
+        error:
+          "Stripe secret key is not configured.",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
 
   if (!webhookSecret) {
     console.error(
@@ -63,6 +79,8 @@ export async function POST(request: Request) {
       }
     );
   }
+
+  const stripe = new Stripe(stripeSecretKey);
 
   const signature =
     request.headers.get("stripe-signature");
@@ -110,14 +128,17 @@ export async function POST(request: Request) {
       "checkout.session.completed"
     ) {
       const incomingSession =
-        event.data.object as Stripe.Checkout.Session;
+        event.data
+          .object as Stripe.Checkout.Session;
 
       const session =
         await stripe.checkout.sessions.retrieve(
           incomingSession.id
         );
 
-      if (session.payment_status !== "paid") {
+      if (
+        session.payment_status !== "paid"
+      ) {
         return Response.json({
           received: true,
           message:
@@ -165,52 +186,56 @@ export async function POST(request: Request) {
       if (existingOrder) {
         return Response.json({
           received: true,
-          message: "Order already recorded.",
+          message:
+            "Order already recorded.",
         });
       }
 
-      const validLicenses: LicenseName[] = [
-        "MP3 Lease",
-        "WAV Lease",
-        "Unlimited",
-        "Exclusive",
-      ];
+      const validLicenses: LicenseName[] =
+        [
+          "MP3 Lease",
+          "WAV Lease",
+          "Unlimited",
+          "Exclusive",
+        ];
 
       const verifiedItems =
         await Promise.all(
-          cartItems.map(async (item) => {
-            const beat =
-              await prisma.beat.findUnique({
-                where: {
-                  id: item.beatId,
-                },
-              });
+          cartItems.map(
+            async (item: StripeCartItem) => {
+              const beat =
+                await prisma.beat.findUnique({
+                  where: {
+                    id: item.beatId,
+                  },
+                });
 
-            if (!beat) {
-              throw new Error(
-                `Beat ${item.beatId} was not found.`
-              );
+              if (!beat) {
+                throw new Error(
+                  `Beat ${item.beatId} was not found.`
+                );
+              }
+
+              if (
+                !validLicenses.includes(
+                  item.license
+                )
+              ) {
+                throw new Error(
+                  `Invalid license for ${beat.title}.`
+                );
+              }
+
+              return {
+                beat,
+                license: item.license,
+                price: getLicensePrice(
+                  item.license,
+                  beat
+                ),
+              };
             }
-
-            if (
-              !validLicenses.includes(
-                item.license
-              )
-            ) {
-              throw new Error(
-                `Invalid license for ${beat.title}.`
-              );
-            }
-
-            return {
-              beat,
-              license: item.license,
-              price: getLicensePrice(
-                item.license,
-                beat
-              ),
-            };
-          })
+          )
         );
 
       const paymentIntentId =
@@ -230,18 +255,25 @@ export async function POST(request: Request) {
         null;
 
       await prisma.$transaction(
-        async (transaction) => {
+        async (
+          transaction: Prisma.TransactionClient
+        ) => {
           await transaction.order.create({
             data: {
               stripeSessionId: session.id,
+
               stripePaymentIntentId:
                 paymentIntentId,
+
               customerEmail,
               customerName,
+
               amountTotal:
                 session.amount_total ?? 0,
+
               currency:
                 session.currency ?? "usd",
+
               paymentStatus:
                 session.payment_status,
 
@@ -267,10 +299,13 @@ export async function POST(request: Request) {
           const exclusiveItems =
             verifiedItems.filter(
               (item) =>
-                item.license === "Exclusive"
+                item.license ===
+                "Exclusive"
             );
 
-          for (const item of exclusiveItems) {
+          for (
+            const item of exclusiveItems
+          ) {
             await transaction.beat.update({
               where: {
                 id: item.beat.id,
