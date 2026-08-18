@@ -25,6 +25,8 @@ type SuccessOrder = {
   amountTotal: number;
   currency: string;
   paymentStatus: string;
+  downloadToken: string | null;
+  downloadExpiresAt: Date | null;
   items: SuccessOrderItem[];
 };
 
@@ -44,10 +46,21 @@ function formatMoney(
   }).format(amountInCents / 100);
 }
 
+function formatDateTime(date: Date) {
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      dateStyle: "long",
+      timeStyle: "short",
+    }
+  ).format(date);
+}
+
 export default async function SuccessPage({
   searchParams,
 }: SuccessPageProps) {
-  const { session_id } = await searchParams;
+  const { session_id } =
+    await searchParams;
 
   if (!session_id) {
     return (
@@ -58,7 +71,8 @@ export default async function SuccessPage({
           </h1>
 
           <p className="mt-4 text-gray-400">
-            No Stripe checkout session was provided.
+            No Stripe checkout session was
+            provided.
           </p>
 
           <Link
@@ -75,13 +89,20 @@ export default async function SuccessPage({
   const order =
     (await prisma.order.findUnique({
       where: {
-        stripeSessionId: session_id,
+        stripeSessionId:
+          session_id,
       },
+
       include: {
         items: true,
       },
     })) as SuccessOrder | null;
 
+  /*
+   * Stripe may redirect the customer
+   * before the webhook finishes saving
+   * the order.
+   */
   if (!order) {
     return (
       <main className="min-h-screen bg-[#090909] px-6 py-20 text-white">
@@ -100,8 +121,10 @@ export default async function SuccessPage({
             </h1>
 
             <p className="mt-4 leading-7 text-gray-400">
-              Your payment was received, but the order is still being
-              recorded. Refresh this page in a few seconds.
+              Your payment was received,
+              but the order is still being
+              recorded. Refresh this page
+              in a few seconds.
             </p>
 
             <a
@@ -125,7 +148,15 @@ export default async function SuccessPage({
     );
   }
 
-  const paid = order.paymentStatus === "paid";
+  const paid =
+    order.paymentStatus === "paid";
+
+  const downloadAvailable =
+    paid &&
+    Boolean(order.downloadToken) &&
+    Boolean(order.downloadExpiresAt) &&
+    order.downloadExpiresAt! >
+      new Date();
 
   return (
     <main className="min-h-screen bg-[#090909] px-6 py-20 text-white">
@@ -154,7 +185,7 @@ export default async function SuccessPage({
 
             <p className="mt-4 text-gray-400">
               {paid
-                ? "Thank you for your purchase. Your files are ready below."
+                ? "Thank you for your purchase. Your files and license are ready below."
                 : "Your payment is still being processed."}
             </p>
 
@@ -191,11 +222,30 @@ export default async function SuccessPage({
             </div>
           </div>
 
+          {downloadAvailable &&
+            order.downloadExpiresAt && (
+              <div className="mt-6 rounded-2xl border border-blue-500/20 bg-blue-500/10 px-5 py-4 text-center">
+                <p className="text-sm text-blue-200">
+                  Secure download access
+                  expires{" "}
+                  <span className="font-black text-white">
+                    {formatDateTime(
+                      order.downloadExpiresAt
+                    )}
+                  </span>
+                </p>
+              </div>
+            )}
+
           <div className="mt-8 space-y-6">
             {order.items.map(
-              (item: SuccessOrderItem) => {
+              (
+                item: SuccessOrderItem
+              ) => {
                 const includesWav =
-                  wavLicenses.has(item.license);
+                  wavLicenses.has(
+                    item.license
+                  );
 
                 return (
                   <article
@@ -219,17 +269,19 @@ export default async function SuccessPage({
 
                       <p className="text-xl font-black">
                         {formatMoney(
-                          item.price * 100,
+                          item.price *
+                            100,
                           order.currency
                         )}
                       </p>
                     </div>
 
-                    {paid && (
+                    {downloadAvailable &&
+                    order.downloadToken ? (
                       <div className="mt-6 grid gap-3 sm:grid-cols-2">
                         <a
-                          href={`/api/download?session_id=${encodeURIComponent(
-                            session_id
+                          href={`/api/download?token=${encodeURIComponent(
+                            order.downloadToken
                           )}&slug=${encodeURIComponent(
                             item.beatSlug
                           )}&format=mp3`}
@@ -240,8 +292,8 @@ export default async function SuccessPage({
 
                         {includesWav && (
                           <a
-                            href={`/api/download?session_id=${encodeURIComponent(
-                              session_id
+                            href={`/api/download?token=${encodeURIComponent(
+                              order.downloadToken
                             )}&slug=${encodeURIComponent(
                               item.beatSlug
                             )}&format=wav`}
@@ -250,13 +302,33 @@ export default async function SuccessPage({
                             Download WAV
                           </a>
                         )}
-                      </div>
-                    )}
 
-                    {item.license === "Exclusive" && (
+                        <a
+                          href={`/api/license?token=${encodeURIComponent(
+                            order.downloadToken
+                          )}&slug=${encodeURIComponent(
+                            item.beatSlug
+                          )}`}
+                          className="rounded-full border border-white/10 px-6 py-4 text-center font-black text-white transition hover:border-blue-500 hover:text-blue-400 sm:col-span-2"
+                        >
+                          Download License PDF
+                        </a>
+                      </div>
+                    ) : paid ? (
+                      <div className="mt-6 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-4 text-sm text-yellow-200">
+                        This download link is
+                        unavailable or has
+                        expired.
+                      </div>
+                    ) : null}
+
+                    {item.license ===
+                      "Exclusive" && (
                       <p className="mt-5 rounded-2xl border border-purple-500/20 bg-purple-500/10 px-4 py-3 text-sm text-purple-300">
-                        This beat was purchased exclusively and has been
-                        removed from the public store.
+                        This beat was purchased
+                        exclusively and has been
+                        removed from the public
+                        store.
                       </p>
                     )}
                   </article>

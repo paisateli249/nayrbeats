@@ -53,19 +53,13 @@ function getRequestedFormat(
 }
 
 function resolveFilePath(filePath: string) {
-  // If the database already contains an absolute path,
-  // use it directly.
   if (path.isAbsolute(filePath)) {
     return filePath;
   }
 
-  // Remove a leading slash so path.join does not
-  // treat it as an absolute filesystem path.
-  const cleanPath = filePath.replace(/^\/+/, "");
+  const cleanPath =
+    filePath.replace(/^\/+/, "");
 
-  // Files stored in public can use paths such as:
-  // /downloads/high-life-90-mob/file.mp3
-  // or downloads/high-life-90-mob/file.mp3
   if (
     cleanPath.startsWith("downloads/") ||
     cleanPath.startsWith("audio/")
@@ -77,8 +71,6 @@ function resolveFilePath(filePath: string) {
     );
   }
 
-  // Otherwise treat the value as relative to
-  // the project directory.
   return path.join(
     process.cwd(),
     cleanPath
@@ -89,8 +81,8 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
 
-    const sessionId =
-      url.searchParams.get("session_id");
+    const token =
+      url.searchParams.get("token");
 
     const slug =
       url.searchParams.get("slug");
@@ -100,11 +92,11 @@ export async function GET(request: Request) {
         url.searchParams.get("format")
       );
 
-    if (!sessionId) {
+    if (!token) {
       return Response.json(
         {
           error:
-            "A Stripe checkout session is required.",
+            "A secure download token is required.",
         },
         {
           status: 400,
@@ -115,7 +107,8 @@ export async function GET(request: Request) {
     if (!slug) {
       return Response.json(
         {
-          error: "A beat slug is required.",
+          error:
+            "A beat slug is required.",
         },
         {
           status: 400,
@@ -124,31 +117,29 @@ export async function GET(request: Request) {
     }
 
     /*
-     * Find the completed order.
-     *
-     * Include OrderItems and their related
-     * Beat so we can verify that this customer
-     * actually purchased the requested beat.
+     * Find the paid order using the private
+     * download token instead of Stripe session ID.
      */
-    const order = await prisma.order.findUnique({
-      where: {
-        stripeSessionId: sessionId,
-      },
+    const order =
+      await prisma.order.findUnique({
+        where: {
+          downloadToken: token,
+        },
 
-      include: {
-        items: {
-          include: {
-            beat: true,
+        include: {
+          items: {
+            include: {
+              beat: true,
+            },
           },
         },
-      },
-    });
+      });
 
     if (!order) {
       return Response.json(
         {
           error:
-            "This order could not be found.",
+            "This download link is invalid.",
         },
         {
           status: 404,
@@ -156,7 +147,9 @@ export async function GET(request: Request) {
       );
     }
 
-    if (order.paymentStatus !== "paid") {
+    if (
+      order.paymentStatus !== "paid"
+    ) {
       return Response.json(
         {
           error:
@@ -169,19 +162,45 @@ export async function GET(request: Request) {
     }
 
     /*
-     * Give the included order items an
-     * explicit TypeScript type.
+     * Block expired download links.
      */
+    if (
+      !order.downloadExpiresAt
+    ) {
+      return Response.json(
+        {
+          error:
+            "This download link has no expiration date.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    if (
+      order.downloadExpiresAt.getTime() <
+      Date.now()
+    ) {
+      return Response.json(
+        {
+          error:
+            "This download link has expired.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
     const orderItems =
       order.items as OrderItemWithBeat[];
 
-    /*
-     * Find the purchased beat inside this order.
-     */
-    const purchasedItem = orderItems.find(
-      (item: OrderItemWithBeat) =>
-        item.beatSlug === slug
-    );
+    const purchasedItem =
+      orderItems.find(
+        (item) =>
+          item.beatSlug === slug
+      );
 
     if (!purchasedItem) {
       return Response.json(
@@ -195,27 +214,22 @@ export async function GET(request: Request) {
       );
     }
 
-    /*
-     * We normally use the Beat relation.
-     *
-     * If the beat was deleted from the database,
-     * beatId may be null because our Prisma
-     * relation uses onDelete: SetNull.
-     */
-    let beat = purchasedItem.beat;
+    let beat =
+      purchasedItem.beat;
 
     if (!beat) {
-      beat = await prisma.beat.findUnique({
-        where: {
-          slug,
-        },
+      beat =
+        await prisma.beat.findUnique({
+          where: {
+            slug,
+          },
 
-        select: {
-          title: true,
-          fullMp3Path: true,
-          fullWavPath: true,
-        },
-      });
+          select: {
+            title: true,
+            fullMp3Path: true,
+            fullWavPath: true,
+          },
+        });
     }
 
     if (!beat) {
@@ -230,21 +244,14 @@ export async function GET(request: Request) {
       );
     }
 
-    /*
-     * Decide which format the customer is
-     * actually allowed to download.
-     *
-     * MP3 Lease = MP3 only
-     * WAV Lease = MP3 + WAV
-     * Unlimited = MP3 + WAV
-     * Exclusive = MP3 + WAV
-     */
     const format: DownloadFormat =
       requestedFormat;
 
     if (
       format === "wav" &&
-      !wavLicenses.has(purchasedItem.license)
+      !wavLicenses.has(
+        purchasedItem.license
+      )
     ) {
       return Response.json(
         {
@@ -257,15 +264,16 @@ export async function GET(request: Request) {
       );
     }
 
-    /*
-     * Choose the correct stored file.
-     */
-    let storedFilePath: string | null = null;
+    let storedFilePath:
+      | string
+      | null = null;
 
     if (format === "wav") {
-      storedFilePath = beat.fullWavPath;
+      storedFilePath =
+        beat.fullWavPath;
     } else {
-      storedFilePath = beat.fullMp3Path;
+      storedFilePath =
+        beat.fullMp3Path;
     }
 
     if (!storedFilePath) {
@@ -282,18 +290,15 @@ export async function GET(request: Request) {
       );
     }
 
-    /*
-     * Convert the database path into the actual
-     * filesystem location.
-     */
     const absoluteFilePath =
-      resolveFilePath(storedFilePath);
+      resolveFilePath(
+        storedFilePath
+      );
 
-    /*
-     * Make sure the file actually exists.
-     */
     try {
-      await fs.access(absoluteFilePath);
+      await fs.access(
+        absoluteFilePath
+      );
     } catch {
       console.error(
         "Download file does not exist:",
@@ -311,17 +316,15 @@ export async function GET(request: Request) {
       );
     }
 
-    /*
-     * Read the audio file.
-     */
     const fileBuffer =
-      await fs.readFile(absoluteFilePath);
+      await fs.readFile(
+        absoluteFilePath
+      );
 
-    /*
-     * Convert Node Buffer to Uint8Array.
-     */
     const fileBytes =
-      new Uint8Array(fileBuffer);
+      new Uint8Array(
+        fileBuffer
+      );
 
     const fileName =
       createDownloadName(
@@ -329,29 +332,33 @@ export async function GET(request: Request) {
         format
       );
 
-    /*
-     * Send the purchased file to the browser.
-     */
-    return new Response(fileBytes, {
-      status: 200,
+    return new Response(
+      fileBytes,
+      {
+        status: 200,
 
-      headers: {
-        "Content-Type":
-          getContentType(format),
+        headers: {
+          "Content-Type":
+            getContentType(
+              format
+            ),
 
-        "Content-Length":
-          String(fileBytes.byteLength),
+          "Content-Length":
+            String(
+              fileBytes.byteLength
+            ),
 
-        "Content-Disposition":
-          `attachment; filename="${fileName}"`,
+          "Content-Disposition":
+            `attachment; filename="${fileName}"`,
 
-        "Cache-Control":
-          "private, no-store, max-age=0",
+          "Cache-Control":
+            "private, no-store, max-age=0",
 
-        "X-Content-Type-Options":
-          "nosniff",
-      },
-    });
+          "X-Content-Type-Options":
+            "nosniff",
+        },
+      }
+    );
   } catch (error) {
     console.error(
       "Secure download error:",

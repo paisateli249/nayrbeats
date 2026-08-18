@@ -1,24 +1,16 @@
 import * as React from "react";
 
-interface EmailTemplateProps {
+interface MixMasterEmailTemplateProps {
   customerName: string;
-  beatTitle: string;
-  license: string;
+  songTitle: string;
   amountPaid: string;
-  downloadUrl: string;
-  licenseUrl: string;
-  downloadExpiresAt: string;
 }
 
-export function EmailTemplate({
+export function MixMasterEmailTemplate({
   customerName,
-  beatTitle,
-  license,
+  songTitle,
   amountPaid,
-  downloadUrl,
-  licenseUrl,
-  downloadExpiresAt,
-}: EmailTemplateProps) {
+}: MixMasterEmailTemplateProps) {
   return (
     <div
       style={{
@@ -57,7 +49,7 @@ export function EmailTemplate({
             margin: "0",
           }}
         >
-          Purchase Confirmed
+          Mix & Master Booking Confirmed
         </h1>
 
         <p
@@ -68,9 +60,9 @@ export function EmailTemplate({
             marginTop: "18px",
           }}
         >
-          Thank you for your purchase
+          Thank you
           {customerName ? `, ${customerName}` : ""}.
-          Your beat and license agreement are ready below.
+          Your Mix & Master payment was received successfully.
         </p>
 
         <div
@@ -91,7 +83,7 @@ export function EmailTemplate({
               margin: "0 0 8px",
             }}
           >
-            BEAT
+            PROJECT
           </p>
 
           <p
@@ -101,7 +93,7 @@ export function EmailTemplate({
               margin: "0 0 18px",
             }}
           >
-            {beatTitle}
+            {songTitle}
           </p>
 
           <p
@@ -111,9 +103,9 @@ export function EmailTemplate({
               margin: "8px 0",
             }}
           >
-            License:{" "}
+            Service:{" "}
             <strong style={{ color: "#ffffff" }}>
-              {license}
+              Mix & Master
             </strong>
           </p>
 
@@ -131,75 +123,49 @@ export function EmailTemplate({
           </p>
         </div>
 
-        <a
-          href={downloadUrl}
+        <div
           style={{
-            display: "block",
             marginTop: "28px",
-            backgroundColor: "#2563eb",
-            color: "#ffffff",
-            textDecoration: "none",
-            textAlign: "center",
-            fontSize: "16px",
-            fontWeight: "700",
-            padding: "16px 24px",
-            borderRadius: "999px",
+            border: "1px solid #1d4ed8",
+            backgroundColor: "#0b1630",
+            borderRadius: "18px",
+            padding: "20px",
           }}
         >
-          Download Your Beat
-        </a>
+          <p
+            style={{
+              margin: "0",
+              fontWeight: "700",
+              fontSize: "15px",
+            }}
+          >
+            What happens next?
+          </p>
 
-        <a
-          href={licenseUrl}
-          style={{
-            display: "block",
-            marginTop: "12px",
-            backgroundColor: "#111111",
-            border: "1px solid #3b82f6",
-            color: "#ffffff",
-            textDecoration: "none",
-            textAlign: "center",
-            fontSize: "16px",
-            fontWeight: "700",
-            padding: "16px 24px",
-            borderRadius: "999px",
-          }}
-        >
-          Download License PDF
-        </a>
+          <p
+            style={{
+              color: "#a3a3a3",
+              fontSize: "14px",
+              lineHeight: "1.7",
+              margin: "10px 0 0",
+            }}
+          >
+            NAYRBEATS will contact you at this email address with the next
+            steps for sending your stems/files and any final project details.
+          </p>
+        </div>
 
         <p
           style={{
             color: "#737373",
             fontSize: "12px",
             lineHeight: "1.6",
-            marginTop: "18px",
-            textAlign: "center",
+            marginTop: "28px",
           }}
         >
-          Your secure download access expires on{" "}
-          {downloadExpiresAt}.
+          Keep this email for your records. If you need to reference your
+          booking later, use the same email address you entered at checkout.
         </p>
-
-        <div
-          style={{
-            borderTop: "1px solid #262626",
-            marginTop: "32px",
-            paddingTop: "22px",
-          }}
-        >
-          <p
-            style={{
-              color: "#737373",
-              fontSize: "12px",
-              lineHeight: "1.6",
-              margin: "0",
-            }}
-          >
-            Keep this email and your license PDF for your records.
-            Your purchase is tied to the license selected at checkout.
-          </p>
-        </div>
       </div>
     </div>
   );

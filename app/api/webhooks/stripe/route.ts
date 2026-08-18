@@ -1,6 +1,10 @@
+import crypto from "crypto";
 import Stripe from "stripe";
+import { Resend } from "resend";
 
 import prisma from "@/lib/prisma";
+import { EmailTemplate } from "@/components/email-template";
+import { MixMasterEmailTemplate } from "@/components/mix-master-email-template";
 
 export const runtime = "nodejs";
 
@@ -16,13 +20,6 @@ interface StripeCartItem {
   license: LicenseName;
 }
 
-/*
- * The transaction only needs access to
- * the order and beat models.
- *
- * This avoids importing Prisma transaction
- * types that Vercel was having trouble with.
- */
 type TransactionDb = Pick<
   typeof prisma,
   "order" | "beat"
@@ -52,12 +49,61 @@ function getLicensePrice(
   }
 }
 
-export async function POST(request: Request) {
+function getPaymentIntentId(
+  session: Stripe.Checkout.Session
+) {
+  return typeof session.payment_intent === "string"
+    ? session.payment_intent
+    : session.payment_intent?.id ?? null;
+}
+
+function createDownloadToken() {
+  return crypto.randomUUID();
+}
+
+function createDownloadExpiration() {
+  return new Date(
+    Date.now() +
+      7 * 24 * 60 * 60 * 1000
+  );
+}
+
+function formatMoney(
+  amountInDollars: number,
+  currency: string
+) {
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency: currency.toUpperCase(),
+    }
+  ).format(amountInDollars);
+}
+
+function formatExpiration(
+  date: Date
+) {
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      dateStyle: "long",
+      timeStyle: "short",
+    }
+  ).format(date);
+}
+
+export async function POST(
+  request: Request
+) {
   const stripeSecretKey =
     process.env.STRIPE_SECRET_KEY;
 
   const webhookSecret =
     process.env.STRIPE_WEBHOOK_SECRET;
+
+  const resendApiKey =
+    process.env.RESEND_API_KEY;
 
   if (!stripeSecretKey) {
     console.error(
@@ -91,13 +137,8 @@ export async function POST(request: Request) {
     );
   }
 
-  /*
-   * Create Stripe only when this route
-   * actually receives a request.
-   */
-  const stripe = new Stripe(
-    stripeSecretKey
-  );
+  const stripe =
+    new Stripe(stripeSecretKey);
 
   const signature =
     request.headers.get(
@@ -147,220 +188,534 @@ export async function POST(request: Request) {
 
   try {
     if (
-      event.type ===
+      event.type !==
       "checkout.session.completed"
     ) {
-      const incomingSession =
-        event.data
-          .object as Stripe.Checkout.Session;
+      return Response.json({
+        received: true,
+      });
+    }
 
-      const session =
-        await stripe.checkout.sessions.retrieve(
-          incomingSession.id
-        );
+    const incomingSession =
+      event.data
+        .object as Stripe.Checkout.Session;
 
-      /*
-       * Only save completed/paid orders.
-       */
-      if (
-        session.payment_status !==
-        "paid"
-      ) {
-        return Response.json({
-          received: true,
-          message:
-            "Checkout completed, but payment is not marked paid.",
-        });
-      }
+    const session =
+      await stripe.checkout.sessions.retrieve(
+        incomingSession.id
+      );
 
-      const cartMetadata =
-        session.metadata?.cart;
+    if (
+      session.payment_status !==
+      "paid"
+    ) {
+      return Response.json({
+        received: true,
+        message:
+          "Checkout completed, but payment is not marked paid.",
+      });
+    }
 
-      if (!cartMetadata) {
+    const service =
+      session.metadata?.service;
+
+    /*
+     * =====================================
+     * MIX & MASTER ORDER
+     * =====================================
+     */
+    if (service === "mix-master") {
+      const customerName =
+        session.metadata
+          ?.customerName ??
+        session.customer_details
+          ?.name ??
+        "";
+
+      const customerEmail =
+        session.metadata
+          ?.customerEmail ??
+        session.customer_details
+          ?.email ??
+        session.customer_email ??
+        "";
+
+      const songTitle =
+        session.metadata
+          ?.songTitle ??
+        "";
+
+      const notes =
+        session.metadata
+          ?.notes ??
+        null;
+
+      if (!customerName) {
         throw new Error(
-          "Stripe Checkout Session has no cart metadata."
+          "Mix & Master checkout is missing customer name."
         );
       }
 
-      let cartItems: StripeCartItem[];
-
-      try {
-        cartItems =
-          JSON.parse(
-            cartMetadata
-          ) as StripeCartItem[];
-      } catch {
+      if (!customerEmail) {
         throw new Error(
-          "Stripe cart metadata is invalid."
+          "Mix & Master checkout is missing customer email."
         );
       }
 
-      if (
-        !Array.isArray(cartItems) ||
-        cartItems.length === 0
-      ) {
+      if (!songTitle) {
         throw new Error(
-          "Stripe cart metadata is empty."
+          "Mix & Master checkout is missing song title."
         );
       }
 
-      /*
-       * Prevent the same Stripe checkout
-       * from creating two orders.
-       */
-      const existingOrder =
-        await prisma.order.findUnique({
+      const existingMixOrder =
+        await prisma.mixMasterOrder.findUnique({
           where: {
             stripeSessionId:
               session.id,
           },
         });
 
-      if (existingOrder) {
+      if (existingMixOrder) {
         return Response.json({
           received: true,
           message:
-            "Order already recorded.",
+            "Mix & Master order already recorded.",
         });
       }
 
-      const validLicenses:
-        LicenseName[] = [
-        "MP3 Lease",
-        "WAV Lease",
-        "Unlimited",
-        "Exclusive",
-      ];
-
-      /*
-       * Verify every beat against our
-       * own database before saving.
-       */
-      const verifiedItems =
-        await Promise.all(
-          cartItems.map(
-            async (
-              item: StripeCartItem
-            ) => {
-              const beat =
-                await prisma.beat.findUnique({
-                  where: {
-                    id: item.beatId,
-                  },
-                });
-
-              if (!beat) {
-                throw new Error(
-                  `Beat ${item.beatId} was not found.`
-                );
-              }
-
-              if (
-                !validLicenses.includes(
-                  item.license
-                )
-              ) {
-                throw new Error(
-                  `Invalid license for ${beat.title}.`
-                );
-              }
-
-              return {
-                beat,
-                license:
-                  item.license,
-
-                price:
-                  getLicensePrice(
-                    item.license,
-                    beat
-                  ),
-              };
-            }
-          )
-        );
-
       const paymentIntentId =
-        typeof session.payment_intent ===
-        "string"
-          ? session.payment_intent
-          : session.payment_intent
-              ?.id ?? null;
+        getPaymentIntentId(session);
 
-      const customerEmail =
-        session.customer_details
-          ?.email ??
-        session.customer_email ??
-        "unknown@example.com";
+      await prisma.mixMasterOrder.create({
+        data: {
+          stripeSessionId:
+            session.id,
 
-      const customerName =
-        session.customer_details
-          ?.name ?? null;
+          stripePaymentIntentId:
+            paymentIntentId,
+
+          customerName,
+
+          customerEmail,
+
+          songTitle,
+
+          notes,
+
+          amountTotal:
+            session.amount_total ??
+            5000,
+
+          currency:
+            session.currency ??
+            "usd",
+
+          paymentStatus:
+            session.payment_status,
+
+          projectStatus:
+            "new",
+        },
+      });
+
+      console.log(
+        `Saved Mix & Master order ${session.id}`
+      );
 
       /*
-       * Save the order and handle
-       * exclusive beats atomically.
+       * =====================================
+       * SEND MIX & MASTER EMAILS
+       * =====================================
        */
+      if (resendApiKey) {
+        try {
+          const resend =
+            new Resend(
+              resendApiKey
+            );
+
+          const amountPaid =
+            formatMoney(
+              (
+                session.amount_total ??
+                5000
+              ) / 100,
+              session.currency ??
+                "usd"
+            );
+
+          /*
+           * Customer confirmation email.
+           */
+          const {
+            error:
+              mixEmailError,
+          } =
+            await resend.emails.send(
+              {
+                from:
+                  "NAYRBEATS <orders@nayrbeats.com>",
+
+                to: [
+                  customerEmail,
+                ],
+
+                subject:
+                  `Your NAYRBEATS Mix & Master Booking — ${songTitle}`,
+
+                react:
+                  MixMasterEmailTemplate({
+                    customerName,
+                    songTitle,
+                    amountPaid,
+                  }),
+              },
+              {
+                idempotencyKey:
+                  `mix-master-customer/${session.id}`,
+              }
+            );
+
+          if (mixEmailError) {
+            console.error(
+              "Mix & Master customer email error:",
+              mixEmailError
+            );
+          } else {
+            console.log(
+              `Mix & Master customer email sent to ${customerEmail}`
+            );
+          }
+
+          /*
+           * Private owner notification.
+           */
+          const {
+            error:
+              ownerEmailError,
+          } =
+            await resend.emails.send(
+              {
+                from:
+                  "NAYRBEATS <orders@nayrbeats.com>",
+
+                to: [
+                  "nayrbeats@gmail.com",
+                ],
+
+                subject:
+                  `NEW MIX & MASTER ORDER — ${songTitle}`,
+
+                html: `
+                  <div style="font-family:Arial,sans-serif;background:#090909;color:#ffffff;padding:30px;">
+                    <h2 style="color:#2563eb;">
+                      NEW MIX & MASTER ORDER
+                    </h2>
+
+                    <p>
+                      <strong>Customer:</strong>
+                      ${customerName}
+                    </p>
+
+                    <p>
+                      <strong>Email:</strong>
+                      ${customerEmail}
+                    </p>
+
+                    <p>
+                      <strong>Song:</strong>
+                      ${songTitle}
+                    </p>
+
+                    <p>
+                      <strong>Amount:</strong>
+                      ${amountPaid}
+                    </p>
+
+                    <p>
+                      <strong>Notes:</strong>
+                    </p>
+
+                    <p>
+                      ${notes || "No notes provided."}
+                    </p>
+
+                    <p style="margin-top:24px;color:#777777;">
+                      Stripe Session:
+                      ${session.id}
+                    </p>
+                  </div>
+                `,
+              },
+              {
+                idempotencyKey:
+                  `mix-master-owner/${session.id}`,
+              }
+            );
+
+          if (ownerEmailError) {
+            console.error(
+              "Owner Mix & Master email error:",
+              ownerEmailError
+            );
+          } else {
+            console.log(
+              "Owner Mix & Master notification sent."
+            );
+          }
+        } catch (emailError) {
+          console.error(
+            "Unable to send Mix & Master emails:",
+            emailError
+          );
+        }
+      } else {
+        console.warn(
+          "RESEND_API_KEY is missing. Mix & Master emails were not sent."
+        );
+      }
+
+      return Response.json({
+        received: true,
+        message:
+          "Mix & Master order recorded.",
+      });
+    }
+
+    /*
+     * =====================================
+     * BEAT PURCHASE ORDER
+     * =====================================
+     */
+
+    const cartMetadata =
+      session.metadata?.cart;
+
+    if (!cartMetadata) {
+      throw new Error(
+        "Stripe Checkout Session has no cart metadata."
+      );
+    }
+
+    let cartItems: StripeCartItem[];
+
+    try {
+      cartItems =
+        JSON.parse(
+          cartMetadata
+        ) as StripeCartItem[];
+    } catch {
+      throw new Error(
+        "Stripe cart metadata is invalid."
+      );
+    }
+
+    if (
+      !Array.isArray(cartItems) ||
+      cartItems.length === 0
+    ) {
+      throw new Error(
+        "Stripe cart metadata is empty."
+      );
+    }
+
+    const existingOrder =
+      await prisma.order.findUnique({
+        where: {
+          stripeSessionId:
+            session.id,
+        },
+      });
+
+    if (existingOrder) {
+      if (
+        !existingOrder.downloadToken ||
+        !existingOrder.downloadExpiresAt
+      ) {
+        const repairedDownloadToken =
+          createDownloadToken();
+
+        const repairedDownloadExpiresAt =
+          createDownloadExpiration();
+
+        await prisma.order.update({
+          where: {
+            id:
+              existingOrder.id,
+          },
+
+          data: {
+            downloadToken:
+              existingOrder.downloadToken ??
+              repairedDownloadToken,
+
+            downloadExpiresAt:
+              existingOrder.downloadExpiresAt ??
+              repairedDownloadExpiresAt,
+          },
+        });
+
+        console.log(
+          `Repaired download access for order ${existingOrder.id}`
+        );
+      }
+
+      return Response.json({
+        received: true,
+        message:
+          "Order already recorded.",
+      });
+    }
+
+    const validLicenses:
+      LicenseName[] = [
+      "MP3 Lease",
+      "WAV Lease",
+      "Unlimited",
+      "Exclusive",
+    ];
+
+    const verifiedItems =
+      await Promise.all(
+        cartItems.map(
+          async (
+            item: StripeCartItem
+          ) => {
+            const beat =
+              await prisma.beat.findUnique({
+                where: {
+                  id:
+                    item.beatId,
+                },
+              });
+
+            if (!beat) {
+              throw new Error(
+                `Beat ${item.beatId} was not found.`
+              );
+            }
+
+            if (
+              !validLicenses.includes(
+                item.license
+              )
+            ) {
+              throw new Error(
+                `Invalid license for ${beat.title}.`
+              );
+            }
+
+            return {
+              beat,
+
+              license:
+                item.license,
+
+              price:
+                getLicensePrice(
+                  item.license,
+                  beat
+                ),
+            };
+          }
+        )
+      );
+
+    const paymentIntentId =
+      getPaymentIntentId(session);
+
+    const customerEmail =
+      session.customer_details
+        ?.email ??
+      session.customer_email ??
+      "";
+
+    const customerName =
+      session.customer_details
+        ?.name ??
+      "";
+
+    if (!customerEmail) {
+      throw new Error(
+        "Beat checkout is missing customer email."
+      );
+    }
+
+    const downloadToken =
+      createDownloadToken();
+
+    const downloadExpiresAt =
+      createDownloadExpiration();
+
+    const createdOrder =
       await prisma.$transaction(
         async (
           transaction: TransactionDb
         ) => {
-          await transaction.order.create({
-            data: {
-              stripeSessionId:
-                session.id,
+          const order =
+            await transaction.order.create({
+              data: {
+                stripeSessionId:
+                  session.id,
 
-              stripePaymentIntentId:
-                paymentIntentId,
+                stripePaymentIntentId:
+                  paymentIntentId,
 
-              customerEmail,
+                customerEmail,
 
-              customerName,
+                customerName:
+                  customerName ||
+                  null,
 
-              amountTotal:
-                session.amount_total ??
-                0,
+                amountTotal:
+                  session.amount_total ??
+                  0,
 
-              currency:
-                session.currency ??
-                "usd",
+                currency:
+                  session.currency ??
+                  "usd",
 
-              paymentStatus:
-                session.payment_status,
+                paymentStatus:
+                  session.payment_status,
 
-              items: {
-                create:
-                  verifiedItems.map(
-                    ({
-                      beat,
-                      license,
-                      price,
-                    }) => ({
-                      beatId:
-                        beat.id,
+                downloadToken,
 
-                      beatTitle:
-                        beat.title,
+                downloadExpiresAt,
 
-                      beatSlug:
-                        beat.slug,
+                items: {
+                  create:
+                    verifiedItems.map(
+                      ({
+                        beat,
+                        license,
+                        price,
+                      }) => ({
+                        beatId:
+                          beat.id,
 
-                      artist:
-                        beat.artist,
+                        beatTitle:
+                          beat.title,
 
-                      license,
+                        beatSlug:
+                          beat.slug,
 
-                      price,
-                    })
-                  ),
+                        artist:
+                          beat.artist,
+
+                        license,
+
+                        price,
+                      })
+                    ),
+                },
               },
-            },
-          });
 
-          /*
-           * Exclusive purchases should
-           * remove the beat from sale.
-           */
+              include: {
+                items: true,
+              },
+            });
+
           const exclusiveItems =
             verifiedItems.filter(
               (item) =>
@@ -374,24 +729,140 @@ export async function POST(request: Request) {
           ) {
             await transaction.beat.update({
               where: {
-                id: item.beat.id,
+                id:
+                  item.beat.id,
               },
 
               data: {
-                published: false,
+                published:
+                  false,
               },
             });
           }
+
+          return order;
         }
       );
 
-      console.log(
-        `Saved Stripe order ${session.id}`
+    console.log(
+      `Saved Stripe beat order ${session.id}`
+    );
+
+    /*
+     * =====================================
+     * SEND BEAT PURCHASE EMAIL
+     * =====================================
+     */
+    if (resendApiKey) {
+      try {
+        const resend =
+          new Resend(
+            resendApiKey
+          );
+
+        const siteUrl =
+          process.env
+            .NEXT_PUBLIC_SITE_URL ??
+          "https://nayrbeats.com";
+
+        for (
+          const item
+          of createdOrder.items
+        ) {
+          const downloadUrl =
+            `${siteUrl}/api/download` +
+            `?token=${encodeURIComponent(
+              downloadToken
+            )}` +
+            `&slug=${encodeURIComponent(
+              item.beatSlug
+            )}` +
+            `&format=mp3`;
+
+          const licenseUrl =
+            `${siteUrl}/api/license` +
+            `?token=${encodeURIComponent(
+              downloadToken
+            )}` +
+            `&slug=${encodeURIComponent(
+              item.beatSlug
+            )}`;
+
+          const {
+            error:
+              emailError,
+          } =
+            await resend.emails.send(
+              {
+                from:
+                  "NAYRBEATS <orders@nayrbeats.com>",
+
+                to: [
+                  customerEmail,
+                ],
+
+                subject:
+                  `Your NAYRBEATS Purchase — ${item.beatTitle}`,
+
+                react:
+                  EmailTemplate({
+                    customerName,
+
+                    beatTitle:
+                      item.beatTitle,
+
+                    license:
+                      item.license,
+
+                    amountPaid:
+                      formatMoney(
+                        item.price,
+                        createdOrder.currency
+                      ),
+
+                    downloadUrl,
+
+                    licenseUrl,
+
+                    downloadExpiresAt:
+                      formatExpiration(
+                        downloadExpiresAt
+                      ),
+                  }),
+              },
+              {
+                idempotencyKey:
+                  `beat-purchase/${session.id}/${item.id}`,
+              }
+            );
+
+          if (emailError) {
+            console.error(
+              "Resend purchase email error:",
+              emailError
+            );
+          } else {
+            console.log(
+              `Purchase email sent to ${customerEmail} for ${item.beatTitle}`
+            );
+          }
+        }
+      } catch (emailError) {
+        console.error(
+          "Unable to send purchase email:",
+          emailError
+        );
+      }
+    } else {
+      console.warn(
+        "RESEND_API_KEY is missing. Purchase email was not sent."
       );
     }
 
     return Response.json({
       received: true,
+      message:
+        "Beat order recorded.",
     });
   } catch (error) {
     console.error(

@@ -38,6 +38,8 @@ model Order {
   amountTotal           Int
   currency              String      @default("usd")
   paymentStatus         String      @default("paid")
+  downloadToken         String?     @unique
+  downloadExpiresAt     DateTime?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   items                 OrderItem[]
@@ -56,4 +58,32 @@ model OrderItem {
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   beat  Beat? @relation(fields: [beatId], references: [id], onDelete: SetNull)
+}
+
+model MixMasterOrder {
+  id                    Int             @id @default(autoincrement())
+  stripeSessionId       String          @unique
+  stripePaymentIntentId String?         @unique
+  customerName          String
+  customerEmail         String
+  songTitle             String
+  notes                 String?
+  amountTotal           Int
+  currency              String          @default("usd")
+  paymentStatus         String          @default("paid")
+  projectStatus         String          @default("new")
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  files                 MixMasterFile[]
+}
+
+model MixMasterFile {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  pathname  String   @unique
+  blobUrl   String
+  fileName  String
+  createdAt DateTime @default(now())
+
+  order MixMasterOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
