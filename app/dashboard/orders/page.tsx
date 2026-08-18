@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import MixMasterStatus from "./MixMasterStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -150,8 +151,9 @@ export default async function OrdersPage() {
           <p className="mt-3 text-gray-400">
             View beat purchases,
             Mix & Master bookings,
-            and uploaded customer
-            files.
+            uploaded customer
+            files, and project
+            progress.
           </p>
         </div>
 
@@ -189,6 +191,8 @@ export default async function OrdersPage() {
             valueClassName="text-purple-400"
           />
         </div>
+
+        {/* MIX & MASTER ORDERS */}
 
         <section className="mt-14">
           <div className="flex items-end justify-between gap-4">
@@ -236,8 +240,8 @@ export default async function OrdersPage() {
                     key={order.id}
                     className="rounded-3xl border border-white/10 bg-[#111111] p-6"
                   >
-                    <div className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-start md:justify-between">
-                      <div>
+                    <div className="flex flex-col gap-6 border-b border-white/10 pb-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
                         <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-500">
                           Mix & Master
                           Order #
@@ -256,7 +260,7 @@ export default async function OrdersPage() {
                           }
                         </p>
 
-                        <p className="mt-1 text-sm text-gray-500">
+                        <p className="mt-1 break-all text-sm text-gray-500">
                           {
                             order.customerEmail
                           }
@@ -267,10 +271,19 @@ export default async function OrdersPage() {
                             order.createdAt
                           )}
                         </p>
+
+                        <MixMasterStatus
+                          orderId={
+                            order.id
+                          }
+                          currentStatus={
+                            order.projectStatus
+                          }
+                        />
                       </div>
 
-                      <div className="text-left md:text-right">
-                        <div className="flex flex-wrap gap-2 md:justify-end">
+                      <div className="text-left lg:text-right">
+                        <div className="flex flex-wrap gap-2 lg:justify-end">
                           <span className="inline-flex rounded-full bg-green-500/15 px-3 py-1 text-xs font-black uppercase tracking-wider text-green-400">
                             {
                               order.paymentStatus
@@ -393,6 +406,8 @@ export default async function OrdersPage() {
             </div>
           )}
         </section>
+
+        {/* BEAT ORDERS */}
 
         <section className="mt-16">
           <div className="flex items-end justify-between gap-4">
